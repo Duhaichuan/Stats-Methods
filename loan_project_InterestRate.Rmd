@@ -1,0 +1,431 @@
+---
+title: "lending_club_projecty_part2"
+author: "Haichuan Du"
+date: "5/22/2020"
+output: html_document
+---
+
+# Read data      
+
+```{r}
+loan <- read.csv("/Users/haidu/Desktop/ds501/bittiger/lendingClu_project/loan-data_project_1/loan.csv", stringsAsFactors = FALSE)
+loanT <- loan
+num.NA <- sort(colSums(is.na(loan)), decreasing = TRUE)
+remain.col <- names(num.NA)[num.NA < 0.8 * dim(loan)[1]]
+delete.col <- names(num.NA)[num.NA >= 0.8 * dim(loan)[1]]
+delete.col
+```
+
+# Feature engineering and selection     
+<<<User feature selection >>>
+
+addr_state, emp_title, member_id, zip_code is removed  
+emp_length, home_ownership is reserved
+
+```{r}
+library(ggplot2)
+#encode home_ownership
+ggplot(loan) + geom_bar(aes(loan$home_ownership))
+loan$home_ownership <- ifelse(loan$home_ownership %in% c("ANY", "NONE", "OTHER"), "OTHER", loan$home_ownership)
+
+#encode state information with the help of int_rate // 这一步要有印象, 算出每一个state的平均 int_rate
+int_state <- by(loan, loan$addr_state, function(x){
+  return(mean(x$int_rate))
+})
+
+#看我们的字典表，原来我们的user feature 有 add——state 包含了50多个国家，如果作为feature就过于冗余了，所以我们通过融合创建出一个额更佳有用的有代笔性的feature
+loan$state_mean_int <-
+  ifelse(loan$addr_state %in% names(int_state)[which(int_state <=
+                                                       quantile(int_state, 0.25))], 'low',
+         ifelse(loan$addr_state %in% names(int_state)[which(int_state <=
+                                                              quantile(int_state, 0.5))],'lowmedium',
+                ifelse(loan$addr_state %in% names(int_state)[which(int_state <= quantile(int_state, 0.75))], 
+                       'mediumhigh', 'high')))
+select.features_1 <- c('home_ownership', 'state_mean_int')
+```
+
+Financial feature selection  
+combine annual_inc and annual_inc_joint, dti and dti_joint, verification_status and verification_status_joint based on joint condition  
+
+```{r}
+loan$dti <- ifelse(!is.na(loan$dti_joint), loan$dti_joint, loan$dti)
+loan$annual_inc <- ifelse(!is.na(loan$annual_inc_joint), loan$annual_inc_joint, loan$annual_inc )
+which(is.na(loan$annual_inc))
+loan$annual_inc[which(is.na(loan$annual_inc))] <- median(loan$annual_inc, na.rm = TRUE)
+loan$verification_status <- ifelse(loan$application_type == 'JOINT', loan$verification_status_joint, loan$verification_status)
+select.features_2 <- c('dti', 'annual_inc', 'verification_status')
+```
+找到dti 和dti_joint的关系， 很明显是互补的关系，然后把NA填上；用median替补NA对于numerical feature，其他同理
+
+Credit scores feature selection  
+
+inq_fi, inq_last_12m is removed for over 80% NA values.   
+The earliest_cr_line and last_credit_pull_d are reserved  
+
+```{r}
+select.features_3 <- c('earliest_cr_line', 'last_credit_pull_d')
+```
+
+credit lines feature selection  
+all_util, open_acc_6m, total_cu_tl, open_il_6m, open_il_12m, open_il_24m, open_rv_12m, open_rv_24m, max_bal_bc, mths_since_last_record, il_util, mths_since_rcnt_il, total_bal_il, max_bal_bc are removed for over 80% NA values 
+
+policy_code and url are removed for irrelavance  
+
+total_acc, tot_cur_bal, open_acc, acc_now_delinq, delinq_2yrs, mths_since_last_delinq, collections_12_mths_ex_med, tot_coll_amt, pub_rec, mths_since_last_major_derog, revol_util, total_rev_hi_lim are reserved  
+
+
+```{r}
+#mean and median are similar so I use mean for na
+loan$total_acc[which(is.na(loan$total_acc))] <- mean(loan$total_acc, na.rm = T) 
+#mean of tot_cur_bal is more influenced by large value so I use median
+loan$tot_cur_bal[which(is.na(loan$tot_cur_bal))] <- median(loan$tot_cur_bal, na.rm = T) 
+#mean and median are similar so I use mean for na
+loan$open_acc[which(is.na(loan$open_acc))] <- mean(loan$open_acc, na.rm = T) 
+#acc_now_delinq is int number, so I use median for na
+loan$acc_now_delinq[which(is.na(loan$acc_now_delinq))] <- median(loan$acc_now_delinq, na.rm = T)
+#delinq_2yrs is int number, so I use median for na
+loan$delinq_2yrs[which(is.na(loan$delinq_2yrs))] <- median(loan$delinq_2yrs, na.rm = T)
+#mths_since_last_delinq is int number, so I use median for na
+loan$mths_since_last_delinq[which(is.na(loan$mths_since_last_delinq))] <- median(loan$mths_since_last_delinq, na.rm = T)
+#collections_12_mths_ex_med is int number, so I use median for na
+loan$collections_12_mths_ex_med[which(is.na(loan$collections_12_mths_ex_med))] <- median(loan$collections_12_mths_ex_med, na.rm = T)
+#tot_coll_amt is int number, so I use median for na
+loan$tot_coll_amt[which(is.na(loan$tot_coll_amt))] <- median(loan$tot_coll_amt, na.rm = T)
+#pub_rec is int number, so I use median for na
+loan$pub_rec[which(is.na(loan$pub_rec))] <- median(loan$pub_rec, na.rm = T)
+#mths_since_last_major_derog is int number, so I use median for na
+loan$mths_since_last_major_derog[which(is.na(loan$mths_since_last_major_derog))] <- median(loan$mths_since_last_major_derog, na.rm = T)
+#mean and median is similar so I use mean for revol_util na values 
+loan$revol_util[which(is.na(loan$revol_util))] <- mean(loan$revol_util, na.rm = T)
+#total_rev_hi_lim is int number, so I use median for na
+loan$total_rev_hi_lim[which(is.na(loan$total_rev_hi_lim))] <- median(loan$total_rev_hi_lim, na.rm = T)
+select.features_4 <- c('total_acc', 'tot_cur_bal', 'open_acc', 'acc_now_delinq', 'delinq_2yrs',
+                       'mths_since_last_delinq', 'collections_12_mths_ex_med', 'tot_coll_amt',
+                       'pub_rec', 'mths_since_last_major_derog', 'revol_util',
+                       'total_rev_hi_lim')
+```
+
+
+loan feature selection  
+desc, id, title, issue_d, are removed   
+loan_amnt, application_type, purpose, term and initial_list_status are reserved 
+
+```{r}
+select.features_5 <- c('loan_amnt', 'application_type', 'purpose',
+                       'term', 'initial_list_status')
+```
+
+loan payment feature selection  
+last_pymnt_amnt, last_pymnt_d, next_pymnt_d, total_pymnt, total_pymnt_inv, total_rec_int, total_rec_late_fee, total_rec_prncp are 《《《inrrelative here  》》》 #不重要的我就选入当feature 了
+installment, funded_amnt, funded_amnt_inv, pymnt_plan, recoveries
+collection_recovery_fee, out_prncp, out_prncp_inv are reserved
+
+```{r}
+select.features_6 <- c('installment', 'funded_amnt', 'funded_amnt_inv', 'pymnt_plan',
+                       'recoveries', 'collection_recovery_fee',
+                       'out_prncp', 'out_prncp_inv')
+```
+
+grade and int_rate are used as well , 这是我们要用到的features
+
+```{r}
+select.features <- c(select.features_1, select.features_2, select.features_3, select.features_4,
+                     select.features_5, select.features_6, 'int_rate')
+loan <- loan[select.features]
+dim(loan)
+```
+
+scale all numeric variables 除了最后一列的 int_rate 所谓数据的中心化是指数据集中的各项数据减去数据集的均值。数据中心化和标准化的意义是一样的，为了消除量纲对数据结构的影响。R中的scale（）函数采用的是样本标准化的思想。https://zhuanlan.zhihu.com/p/30518877
+```{r}
+select.features.num <- names(loan[, sapply(loan[, 1:32], is.numeric)]) #注意是到32不是33哦
+loan.scale <- loan
+loan.scale[, select.features.num] <- scale(loan.scale[, select.features.num])
+```
+
+check the level of all category variables     
+```{r}
+select.features.cate <- names(loan.scale[, sapply(loan.scale, is.character)])
+n_levels <- sort(sapply(loan.scale[select.features.cate], function(x) {nlevels(as.factor(x))}), decreasing = TRUE) #熟记这种方法
+```
+earliest_cr_line=698, last_credit_pull_d=104
+The level number of 'earliest_cr_line' and 'last_credit_pull_d' is too large. Further treatment needs applying. dummy varibale 太多了，需要简化一下
+
+```{r}
+# anova_test <- aov(int_rate ~ earliest_cr_line, data = loan.scale)
+# summary(anova_test)
+```
+运行太慢了
+The ANOVA test shows this feature is important so I can't delete it. Therefore, I will transfer it into years only. 
+http://www.sthda.com/english/wiki/one-way-anova-test-in-r
+
+```{r}
+library("zoo")
+loan.scale$earliest_cr_line <- format(as.Date(as.yearmon(loan.scale$earliest_cr_line, "%B-%Y")), "%Y") #transfer it into years only.
+length(unique(loan.scale$earliest_cr_line))
+```
+
+Now the levels of earliest_cr_line are reduced to 68. 
+
+```{r}
+anova_test <- aov(int_rate ~ last_credit_pull_d, data = loan.scale)
+summary(anova_test)
+```
+
+The ANOVA test shows this feature is important so I can't delete it. Therefore, I will transfer it into years only.      
+
+```{r}
+loan.scale$last_credit_pull_d <- format(as.Date(as.yearmon(loan.scale$last_credit_pull_d, "%B-%Y")), "%Y")
+length(unique(loan.scale$last_credit_pull_d))
+```
+
+# Build model to predict the loan interest_rate     
+
+train, test data set selection   
+
+```{r}
+set.seed(1)
+train.ind <- sample(1:dim(loan.scale)[1], 0.8 * dim(loan.scale)[1])
+train <- loan.scale[train.ind,]
+test <- loan.scale[-train.ind,]
+```
+
+build regression model   
+
+```{r}
+mod <- lm(int_rate ~ ., data = train)
+summary(mod)
+```
+
+Based on the summary information, I notice some features are not significant in building linear regression. So I decided to add Lasso regularization to penalize them.     
+
+# testing residual normality
+
+```{r}
+# residual = observed - fitted
+summary(mod$fitted.values) # predict 出来的 min int_rate 是 -65.17 不太合理
+plot(mod$fit, mod$res, xlab = 'Fitted', ylab = 'residual')
+abline(h=0)   #想要看看是否是random pattern 加一条线来方便看
+#plot(mod)
+```
+从summary和我们的图It’s impossible for the interest rate to be a negative value, so we need to adjust the model 通过 log. 我们可以大概估算到 residul = 实际值-fitted值，我们其实大概估算到实际值等于多少通过看上图
+
+# adjustment
+
+```{r}
+# mod2 <- lm(log(int_rate) ~. ,data = train)
+# summary(mod2)
+# summary(exp(mod2$fitted.values)) # 因为用了log, 所以我们的用exp的出来的predicted value 合理多了
+# plot(mod2$fitted.values, mod2$residuals, xlab = 'Fitted', ylab = 'residual')
+# abline(v = 0, lty = 2, col = 2)
+# abline(v = 4, lty=2, col=3)
+# 
+# #把residual 大于4 小于 1 的给拿出来，要会利用好我们的residual 来确定
+# outlier <- cbind(train[which(mod2$fitted.values > 4 | mod2$fitted.values < 1),], 
+#       fit = exp(mod2$fitted.values[which(mod2$fitted.values > 4 | mod2$fitted.values < 1)]))
+# # cbin 看我们的额最后2列，实际和预测值这几个是相差很多的，所以residual才会很大
+# 
+# rownames(outlier)
+# 
+# # remove outlier, 
+# outlier_index <- which(rownames(train) %in%  rownames(outlier))
+# train <- train[-outlier_index,]
+# 
+# mod2_2 <- lm(log(int_rate) ~. ,data = train)
+# plot(mod2_2$fitted.values, mod2_2$residuals, xlab = 'Fitted', ylab = 'residual')
+```
+这里可以有多种处理方法，对于outlier特别要注意知道
+
+Lass modell 
+```{r}
+library(glmnet)
+drops <- c("last_credit_pull_d","earliest_cr_line","funded_amnt_inv","pymnt_plan", "int_rate")
+ind <- train[, !names(loan.scale) %in% drops]
+ind <- model.matrix( ~., ind) #.~ 指ind里面的所有feature, model.matrix 把category 的dummmy varibale 转换成了bollean feature m个level                              #转换成m-1个boolean feature. 
+dep <- train[, "int_rate"]
+#Use cross validation to tune parameters
+linear.cvfit <- cv.glmnet(ind, dep, family = "gaussian", alpha = 1) # alpha=0, Ridge Model is fit and if alpha=1, a lasso model is fit.
+plot(linear.cvfit)
+```
+cv.glmnet() performs cross-validation, by default 10-fold which can be adjusted using nfolds. A 10-fold CV will randomly divide your observations into 10 non-overlapping groups/folds of approx equal size. The first fold will be used for validation set and the model is fit on 9 folds. Bias Variance advantages is usually the motivation behind using such model validation methods. In the case of lasso and ridge models, CV helps choose the value of the tuning parameter lambda.
+
+
+Choose optimus parameters for this linear regression model.   
+
+```{r}
+print(paste('The optimus lambda for model is', round(linear.cvfit$lambda.1se, 5)))
+print(coef(linear.cvfit, s = "lambda.1se"))
+```
+lambda.min is the value of λ that gives minimum mean cross-validated error. The other λ saved is lambda.1se, which gives the most regularized model such that error is within one standard error of the minimum. 
+
+
+make predictions for test data set
+
+```{r}
+library(hydroGOF)
+ind <- test[, !names(test) %in% drops]
+ind <- model.matrix( ~., ind)
+cv.pred <- predict(linear.cvfit, s=linear.cvfit$lambda.1se, new = ind)
+print(paste0("The mean square error is: ", round(mse(cv.pred[,1], test$int_rate),4), "%"))
+print(paste("The mean absolute error is: ", round(mae(cv.pred[,1], test$int_rate),4), "%"))
+
+```
+
+我们其实也可以算出ridge regression 然后compare which model gives the most stable performance.
+
+
+```{r}
+library(rpart)
+formula <- paste("int_rate ~ ", paste(colnames(train)[-33], collapse = " + ")) 
+
+tree0 <- rpart(formula, method = "anova",  data = train,
+               control = rpart.control(cp = 0.001) )  
+# 我们是continous response 用 anova,cate 用 class, 不写的话也会自动detect出来的， cp 对应的就是我们公式的阿尔法相当于glm 的囊大， cp小的话我们会得到比较大深复杂的一个tree，大则相反
+
+printcp(tree0)
+plotcp(tree0)
+
+bestcp <- tree0$cptable[which.min(tree0$cptable[,"xerror"]), "CP"] # xerroe == crossvalid error, 如果cp 取的很小的话，我们的xerror 会不断下降然后在稍微的上升一点， 因为overfititng了,  所以我们需要剪枝prund, 我们的cp 这取的一般大， 太小了， 跑不动，树太深太复杂
+cp.tab <- as.data.frame(tree0$cptable)
+#with(cp.tab, min(which(xerror - 2*xstd < min(xerror))))
+bestcp <- cp.tab$CP[with(cp.tab, min(which(xerror - xstd < min(xerror))))]
+# Step 3: Prune the tree using the best cp.
+tree.pruned <- prune(tree0, cp = bestcp)
+# tree.pruned$cptable
+# tree0$cptable
+# in this case tree.pruned and tree0 are the same
+# because not yet overfitting
+test.pred <- predict(tree.pruned, test)
+sqrt(sum((test.pred - test$int_rate)^2) / length(test.pred)) #  = 3.066
+
+plot(tree.pruned, uniform = TRUE) 
+text(tree.pruned, cex = 0.8, use.n = TRUE, xpd = TRUE)   #图有点杂
+library(rpart.plot)
+prp(tree0)    #这个view 稍微好点
+
+```
+
+
+# Random Forest
+
+```{r}
+library(randomForest)
+library(tidyverse)
+
+# Categorical featues need to be factors when using randomForest
+train2 <- train %>% mutate_if(is.character, as.factor) #train2 只用于random forest
+test2 <- test %>% mutate_if(is.character, as.factor)
+set.seed(1) 
+```
+
+random forest does not allow NA values in the dataframe
+```{r}
+train2 <-  na.omit(train2)
+rf <- randomForest(x = train2[, c(-33, -6)], y = train2[, 33], importance = TRUE,
+                   do.trace = TRUE, nodesize = 7000, ntree = 10) #这里我减去了第6列的earliest_cr_line ，因为他有67个level，如果优化或者删掉会导致too many level random forest 报错大于>53 level 无法运行。 但是依旧这个模型还是运行的很慢，一般我们的nodesize为总observation的1/10， ntree 默认为500，但是需要跑挺久的， 所以先设置为10。do.trace = TRUE 每一f完之后都会打印，这杨方便看
+
+varImpPlot(rf)
+importance(rf, type = 1) # rf$importance 查看看的到 1 for %IncMSE 2 for InNodePurity)
+importanceOrder= order(rf$importance[, "%IncMSE"], decreasing = T)
+names=rownames(rf$importance)[importanceOrder]  #我们可以知道feature 重要性的排序by incMSE
+partialPlot(rf, train2, eval("loan_amnt"), xlab = "loan_amnt") # random forest 方便我们查看不同feature和response的关系，比如我想查看下loan_amnt，可以看到这个不是线性的，实际上也是合理的，同时我们往前看知道我们之前fit regressio的时候有出现负的int_rate。 这说的过去他们不是线性关系的
+
+
+# 卡看predict的值
+test2 <-  na.omit(test2)
+test.pred <- predict(rf, test2)
+sqrt(sum((test.pred - test2$int_rate)^2) / dim(test)[1]) # 3.09 和前面3.06差不多，但是我们把ntree提高的话，应该得到比较小的答案。
+```
+# Boosting Tree
+
+```{r}
+library(xgboost)
+set.seed(1)
+
+train.label <- train$int_rate
+options(na.action='na.pass') #这一步一般都要用，因为不然有NA的话就会自动省略这一行那么我们等会用xgboost就会对不上，所以要保持 NA pass,保留这个行，不然对不上
+# Xgboost manages only numeric vectors.
+feature.matrix <- model.matrix( ~ ., data = train[, -33]) 
+# Remember we removed rows with NA in randomForest fitting. model.matrix will also remove rows with any NA.
+gbt <- xgboost(data =  feature.matrix, 
+               label = train.label, 
+               max_depth = 8, # for each tree, how deep it goes
+               nround = 20, # number of trees
+               objective = "reg:linear", #we have cts response
+               nthread = 3,  
+               verbose = 1) #告诉我们每步数得出结果
+```
+
+```{r}
+importance <- xgb.importance(feature_names = colnames(feature.matrix), model = gbt)
+importance
+xgb.plot.importance(importance)   #每一个feature他的gain 的相比较
+
+```
+Cross Validation for gradient boosted tree
+```{r}
+gbt.cv <- xgb.cv(data =  feature.matrix, 
+               label = train.label, 
+               max_depth = 8, # for each tree, how deep it goes
+               nround = 20, # number of trees
+               objective = "reg:linear", #we have cts response
+               nthread = 3,  
+               verbose = 1, #告诉我们每步数得出结果
+                nfold = 5, nrounds = 30)  #nrounds = 30 跑不动啊
+```
+
+Cross Validation for gradient boosted tree， 当属足够多的时候也会出现xError先下降后稍微上升 
+
+把图做出来看看
+```{r}
+plot(gbt.cv$evaluation_log$train_rmse_mean, type = 'l')   # train
+lines(gbt.cv$evaluation_log$test_rmse_mean, col = 'red')  #test
+nround = which(gbt.cv$evaluation_log$test_rmse_mean == 
+                 min(gbt.cv$evaluation_log$test_rmse_mean))
+```
+
+Grid search for best parameter combinations 1:46视频结尾部分左右看看讲解
+```{r}
+all_param = NULL
+all_test_rmse = NULL
+all_train_rmse = NULL
+for (iter in 1:10) {
+  print(iter)
+  param <- list(objective = "reg:linear",
+                max_depth = sample(5:12, 1), 
+                subsample = runif(1, .5, .9)
+                #eta = runif(1, .01, .3),
+                #gamma = runif(1, 0.0, 0.2),
+                #colsample_bytree = 1,
+                #min_child_weight = sample(1:40, 2),
+                #max_delta_step = sample(1:10, 2)
+  )
+  cv.nround = 30
+  cv.nfold = 5
+  set.seed(iter)
+  mdcv <- xgb.cv(data=feature.matrix, label = train.label, params = param, 
+                 nfold=cv.nfold, nrounds=cv.nround,
+                 verbose = F,  early_stop_round=8, 
+                 maximize = FALSE)
+  min_train_rmse = min(mdcv$evaluation_log$train_rmse_mean)
+  min_test_rmse = min(mdcv$evaluation_log$test_rmse_mean)
+  
+  all_param <- rbind(all_param, c(param$max_depth,param$subsample))
+  all_train_rmse <- c(all_train_rmse, min_train_rmse)
+  all_test_rmse <- c(all_test_rmse, min_test_rmse)
+}
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
